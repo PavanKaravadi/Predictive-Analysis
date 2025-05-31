@@ -8,7 +8,7 @@ from sklearn.preprocessing import LabelEncoder
 
 # Load ML model
 try:
-    model = joblib.load("covid19_cases_predictor.pkl")
+    model = joblib.load("random_forest_model.pkl")
 except:
     st.warning("Model file not found. Using a dummy model for demonstration.")
     model = RandomForestRegressor()  # Fallback dummy model
