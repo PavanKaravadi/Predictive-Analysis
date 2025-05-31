@@ -3,25 +3,14 @@ import pandas as pd
 import joblib
 import datetime
 import numpy as np
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import LabelEncoder
 
 # Load ML model
-try:
-    model = joblib.load("covid19_cases_predictor.pkl")
-except:
-    st.warning("Model file not found. Using a dummy model for demonstration.")
-    model = RandomForestRegressor()  # Fallback dummy model
+model = joblib.load("covid19_cases_predictor.pkl")
 
 # Load datasets
-@st.cache_data
-def load_data():
-    confirmed_df = pd.read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv')
-    deaths_df = pd.read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv')
-    latest_data = pd.read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_daily_reports/01-15-2023.csv')
-    return confirmed_df, deaths_df, latest_data
-
-confirmed_df, deaths_df, latest_data = load_data()
+confirmed_df = pd.read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv')
+deaths_df = pd.read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv')
+latest_data = pd.read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_daily_reports/01-15-2023.csv')
 
 # Title
 st.title("COVID-19 Prediction Dashboard")
@@ -36,117 +25,63 @@ states_filtered = latest_data[latest_data['Country_Region'] == country]['Provinc
 state = st.selectbox("Select State", sorted(states_filtered))
 
 # Select date
-last_known_date = st.date_input("Last Known Case Date", datetime.date(2023, 1, 14))
-
-# Prepare encoders (should match your model training)
-country_encoder = LabelEncoder()
-state_encoder = LabelEncoder()
-country_encoder.fit(latest_data['Country_Region'])
-state_encoder.fit(latest_data['Province_State'])
+last_known_date = st.date_input("Last Known Case Date", datetime.date.today())
 
 # Predict Button
 if st.button("Predict for Next 30 Days"):
-    # Get historical data for selected region
-    region_mask = (confirmed_df['Country/Region'] == country) & (confirmed_df['Province/State'].fillna('Unknown') == state)
-    region_cases = confirmed_df[region_mask].iloc[:, 4:].T
-    region_cases.columns = ['Cases']
-    region_cases.index = pd.to_datetime(region_cases.index)
-    
-    # Feature engineering (should match your model training)
-    def create_features(df):
-        df = df.copy()
-        df['day'] = df.index.day
-        df['month'] = df.index.month
-        df['day_of_week'] = df.index.dayofweek
-        df['day_of_year'] = df.index.dayofyear
-        df['week_of_year'] = df.index.isocalendar().week
-        df['lag_7'] = df['Cases'].shift(7)
-        df['lag_14'] = df['Cases'].shift(14)
-        df['rolling_avg_7'] = df['Cases'].rolling(7).mean()
-        return df.dropna()
-    
-    # Prepare data for prediction
-    train_df = create_features(region_cases)
-    
-    if len(train_df) == 0:
-        st.error("No historical data available for this region")
-    else:
-        # Encode location features
-        country_encoded = country_encoder.transform([country])[0]
-        state_encoded = state_encoder.transform([state])[0]
-        
-        # Prepare future dates
-        future_dates = pd.date_range(
-            start=last_known_date + datetime.timedelta(days=1),
-            periods=30
-        )
-        
-        # Prepare empty results DataFrame
-        results = []
-        
-        # Get latest actual values
-        latest_row = train_df.iloc[-1]
-        current_cases = latest_row['Cases']
-        current_date = train_df.index[-1]
-        
-        # Calculate base rates
-        region_deaths = deaths_df[region_mask].iloc[:, 4:].T.iloc[-1, 0]
-        population = 1e6  # This should be replaced with actual population data
-        incident_rate_base = (current_cases / population) * 100000 if population > 0 else 0
-        fatality_rate_base = (region_deaths / current_cases) * 100 if current_cases > 0 else 0
-        
-        # Predict for each future day
-        for i, date in enumerate(future_dates):
-            # Simulate the historical lag and rolling features from original training data
-            lag_7 = train_df['Cases'].iloc[-7] if len(train_df) >= 7 else 0
-            lag_14 = train_df['Cases'].iloc[-14] if len(train_df) >= 14 else 0
-            rolling_avg_7 = train_df['Cases'].iloc[-7:].mean() if len(train_df) >= 7 else 0
+    # Encode country and state (replace with actual encodings used in your model)
+    country_encoded = hash(country) % 1000
+    state_encoded = hash(state) % 1000
 
-            # Prepare features for prediction (no dependency on previous prediction)
-            day_features = {
-                'day': date.day,
-                'month': date.month,
-                'day_of_week': date.dayofweek,
-                'day_of_year': date.dayofyear,
-                'week_of_year': date.isocalendar().week,
-                'country': country_encoded,
-                'state': state_encoded,
-                'lag_7': lag_7,
-                'lag_14': lag_14,
-                'rolling_avg_7': rolling_avg_7
-            }
+    # Prepare future dates
+    future_days = np.arange(1, 31)
+    future_dates = [last_known_date + datetime.timedelta(days=int(i)) for i in future_days]
 
-            features_df = pd.DataFrame([day_features])
+    predicted_cases = []
+    incidence_rates = []
+    mortality_rates = []
 
-            # Predict cases (not cumulatively)
-            try:
-                predicted_cases = max(0, int(model.predict(features_df)[0]))
-            except:
-                predicted_cases = int(rolling_avg_7)  # fallback to mean
+    # Get real values from latest report for this country and state
+    try:
+        region_row = latest_data[
+            (latest_data['Country_Region'] == country) & 
+            (latest_data['Province_State'] == state)
+        ].iloc[0]
 
-            # Calculate rates
-            predicted_incidence = (predicted_cases / population) * 100000 if population > 0 else 0
-            predicted_mortality = (region_deaths / predicted_cases) * 100 if predicted_cases > 0 else 0
+        confirmed = region_row['Confirmed']
+        deaths = region_row['Deaths']
+        incident_rate_base = region_row['Incident_Rate'] if region_row['Incident_Rate'] > 0 else 0
+        fatality_ratio_base = region_row['Case_Fatality_Ratio'] if region_row['Case_Fatality_Ratio'] > 0 else 0
+    except:
+        confirmed, deaths, incident_rate_base, fatality_ratio_base = 1000, 10, 5.0, 1.0
 
-            results.append({
-                'Date': date.date(),
-                'Predicted Cases': predicted_cases,
-                'Incidence Rate (per 100k)': round(predicted_incidence, 2),
-                'Mortality Rate (%)': round(predicted_mortality, 2)
-            })
-            
-            # Update current cases for next prediction
-            current_cases = predicted_cases
-        
-        # Create results DataFrame
-        result_df = pd.DataFrame(results)
-        
-        # Show results
-        st.subheader(f"30-Day Prediction for {state}, {country}")
-        st.dataframe(result_df)
-        
-        # Plot cases prediction
-        st.line_chart(result_df.set_index('Date')['Predicted Cases'])
-        
-        # Plot rates
-        st.line_chart(result_df.set_index('Date')[['Incidence Rate (per 100k)', 'Mortality Rate (%)']])
+    # Predict for each day
+    for day in future_days:
+        features = [[day, country_encoded, state_encoded]]
+        try:
+            pred = model.predict(features)[0]
+        except Exception as e:
+            pred = 0
+        pred = max(0, int(pred))
+        predicted_cases.append(pred)
+
+        # Calculate rates (example logic)
+        predicted_incidence = incident_rate_base + (pred / 100000 * 100)  # fake increment
+        predicted_mortality = (deaths + pred * fatality_ratio_base / 100) / max(1, confirmed + pred) * 100
+
+        incidence_rates.append(round(predicted_incidence, 2))
+        mortality_rates.append(round(predicted_mortality, 2))
+
+    # Output DataFrame
+    result_df = pd.DataFrame({
+        'Date': future_dates,
+        'Predicted Confirmed Cases': predicted_cases,
+        'Estimated Incidence Rate (per 100k)': incidence_rates,
+        'Estimated Mortality Rate (%)': mortality_rates
+    })
+
+    # Show results
+    st.subheader("Prediction Results")
+    st.dataframe(result_df)
+    st.line_chart(result_df.set_index('Date')[['Predicted Confirmed Cases']])
+    st.line_chart(result_df.set_index('Date')[['Estimated Incidence Rate (per 100k)', 'Estimated Mortality Rate (%)']])
