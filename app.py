@@ -7,15 +7,11 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import LabelEncoder
 
 # Load ML model
-@st.cache_resource
-def load_model():
-    try:
-        return joblib.load("covid19_cases_predictor.pkl")
-    except Exception as e:
-        st.warning(f"Model loading failed: {str(e)}. Using dummy model.")
-        return RandomForestRegressor(random_state=42)
-
-model = load_model()
+try:
+    model = joblib.load("covid19_cases_predictor.pkl")
+except:
+    st.warning("Model file not found. Using a dummy model for demonstration.")
+    model = RandomForestRegressor()  # Fallback dummy model
 
 # Load datasets
 @st.cache_data
@@ -28,156 +24,127 @@ def load_data():
 confirmed_df, deaths_df, latest_data = load_data()
 
 # Title
-st.title("COVID-19 Daily Cases Prediction Dashboard")
+st.title("COVID-19 Prediction Dashboard")
 
-# Preprocess location info
-latest_data['Province_State'] = latest_data['Province_State'].fillna('')
-latest_data['Country_Region'] = latest_data['Country_Region'].fillna('')
+# Preprocess location info from latest data
+latest_data['Province_State'] = latest_data['Province_State'].fillna('Unknown')
+latest_data['Country_Region'] = latest_data['Country_Region'].fillna('Unknown')
 
 # Dropdown inputs
 country = st.selectbox("Select Country", sorted(latest_data['Country_Region'].unique()))
 states_filtered = latest_data[latest_data['Country_Region'] == country]['Province_State'].unique()
-state = st.selectbox("Select State/Province", ['National'] + sorted([s for s in states_filtered if s != '']))
+state = st.selectbox("Select State", sorted(states_filtered))
 
-# Date selection
+# Select date
 last_known_date = st.date_input("Last Known Case Date", datetime.date(2023, 1, 14))
 
-# Prepare encoders
+# Prepare encoders (should match your model training)
 country_encoder = LabelEncoder()
 state_encoder = LabelEncoder()
 country_encoder.fit(latest_data['Country_Region'])
-state_encoder.fit(['National'] + latest_data['Province_State'].dropna().unique().tolist())
+state_encoder.fit(latest_data['Province_State'])
 
 # Predict Button
 if st.button("Predict for Next 30 Days"):
-    # Get historical data
-    if state == 'National':
-        region_mask = (confirmed_df['Country/Region'] == country)
-    else:
-        region_mask = ((confirmed_df['Country/Region'] == country) & 
-                      (confirmed_df['Province/State'].fillna('') == state))
-    
-    if not region_mask.any():
-        st.error("No data available for selected region")
-        st.stop()
-    
-    # Get cases and convert to daily (non-cumulative)
+    # Get historical data for selected region
+    region_mask = (confirmed_df['Country/Region'] == country) & (confirmed_df['Province/State'].fillna('Unknown') == state)
     region_cases = confirmed_df[region_mask].iloc[:, 4:].T
-    region_cases = region_cases.diff(axis=0).dropna()  # Convert to daily new cases
-    region_cases.columns = ['Daily Cases']
+    region_cases.columns = ['Cases']
     region_cases.index = pd.to_datetime(region_cases.index)
-    region_cases = region_cases.clip(lower=0)  # Remove negative values
     
-    # Feature engineering
+    # Feature engineering (should match your model training)
     def create_features(df):
         df = df.copy()
-        # Date features
         df['day'] = df.index.day
         df['month'] = df.index.month
         df['day_of_week'] = df.index.dayofweek
         df['day_of_year'] = df.index.dayofyear
-        
-        # Lag features
-        for lag in [1, 2, 3, 7, 14]:
-            df[f'lag_{lag}'] = df['Daily Cases'].shift(lag).fillna(method='ffill')
-        
-        # Rolling features
-        df['rolling_avg_7'] = df['Daily Cases'].rolling(7, min_periods=1).mean()
-        df['rolling_std_7'] = df['Daily Cases'].rolling(7, min_periods=1).std()
-        
-        return df.dropna(subset=['Daily Cases'])
-
+        df['week_of_year'] = df.index.isocalendar().week
+        df['lag_7'] = df['Cases'].shift(7)
+        df['lag_14'] = df['Cases'].shift(14)
+        df['rolling_avg_7'] = df['Cases'].rolling(7).mean()
+        return df.dropna()
+    
+    # Prepare data for prediction
     train_df = create_features(region_cases)
     
-    if len(train_df) < 14:  # Need at least 2 weeks of data
-        st.error("Insufficient historical data for prediction")
-        st.stop()
-    
-    # Encode location
-    try:
+    if len(train_df) == 0:
+        st.error("No historical data available for this region")
+    else:
+        # Encode location features
         country_encoded = country_encoder.transform([country])[0]
-        state_encoded = state_encoder.transform([state])[0] if state != 'National' else 0
-    except ValueError as e:
-        st.error(f"Encoding error: {str(e)}")
-        st.stop()
-    
-    # Prepare features for prediction
-    feature_cols = [col for col in train_df.columns if col != 'Daily Cases']
-    
-    # Predict next 30 days
-    predictions = []
-    current_features = train_df.iloc[-1][feature_cols].copy()
-    
-    for i in range(30):
-        # Update date features for the prediction day
-        pred_date = last_known_date + datetime.timedelta(days=i+1)
-        current_features['day'] = pred_date.day
-        current_features['month'] = pred_date.month
-        current_features['day_of_week'] = pred_date.weekday()
-        current_features['day_of_year'] = pred_date.timetuple().tm_yday
-        current_features['country'] = country_encoded
-        current_features['state'] = state_encoded
+        state_encoded = state_encoder.transform([state])[0]
         
-        # Prepare input features (must match model training)
-        input_features = pd.DataFrame([current_features])[feature_cols]
+        # Prepare future dates
+        future_dates = pd.date_range(
+            start=last_known_date + datetime.timedelta(days=1),
+            periods=30
+        )
         
-        # Make prediction
-        try:
-            pred = max(0, int(model.predict(input_features)[0]))
-        except Exception as e:
-            st.error(f"Prediction failed: {str(e)}")
-            pred = 0
+        # Prepare empty results DataFrame
+        results = []
         
-        predictions.append({
-            'Date': pred_date,
-            'Predicted Daily Cases': pred,
-            'Incidence Rate (per 100k)': round((pred / 1e6) * 100000, 2) if pred > 0 else 0,
-            'Mortality Rate (%)': round((deaths_df[region_mask].iloc[:, 4:].T.iloc[-1, 0] / pred * 100, 4)) if pred > 0 else 0
-        })
+        # Get latest actual values
+        latest_row = train_df.iloc[-1]
+        current_cases = latest_row['Cases']
+        current_date = train_df.index[-1]
         
-        # Update features for next prediction
-        for lag in [14, 7, 3, 2, 1]:
-            if lag == 1:
-                current_features[f'lag_{lag}'] = pred
-            else:
-                current_features[f'lag_{lag}'] = current_features[f'lag_{lag-1}']
+        # Calculate base rates
+        region_deaths = deaths_df[region_mask].iloc[:, 4:].T.iloc[-1, 0]
+        population = 1e6  # This should be replaced with actual population data
+        incident_rate_base = (current_cases / population) * 100000 if population > 0 else 0
+        fatality_rate_base = (region_deaths / current_cases) * 100 if current_cases > 0 else 0
         
-        current_features['rolling_avg_7'] = np.mean([current_features[f'lag_{l}'] for l in range(1, 8)])
-        current_features['rolling_std_7'] = np.std([current_features[f'lag_{l}'] for l in range(1, 8)])
-    
-    # Create results
-    result_df = pd.DataFrame(predictions).set_index('Date')
-    
-    # Show results
-    st.subheader(f"Daily Case Predictions for {state if state != 'National' else ''} {country}".strip())
-    
-    # Plot historical vs predicted
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Average Daily Cases", f"{result_df['Predicted Daily Cases'].mean():,.0f}")
-        st.line_chart(result_df['Predicted Daily Cases'], use_container_width=True)
-    
-    with col2:
-        st.metric("Total Predicted Cases", f"{result_df['Predicted Daily Cases'].sum():,.0f}")
-        st.line_chart(result_df[['Incidence Rate (per 100k)', 'Mortality Rate (%)']], use_container_width=True)
-    
-    # Detailed data
-    st.write("Detailed Predictions:")
-    st.dataframe(
-        result_df.style.format({
-            'Predicted Daily Cases': '{:,}',
-            'Incidence Rate (per 100k)': '{:.2f}',
-            'Mortality Rate (%)': '{:.4f}'
-        }).background_gradient(cmap='YlOrRd'),
-        use_container_width=True
-    )
-
-# Instructions
-st.markdown("""
-**Instructions:**
-1. Select country and state/province (or 'National' for country-level)
-2. Set the last known case date
-3. Click "Predict for Next 30 Days"
-
-**Note:** Shows daily new cases, not cumulative totals.
-""")
+        # Predict for each future day
+        for i, date in enumerate(future_dates):
+            # Prepare features for prediction
+            day_features = {
+                'day': date.day,
+                'month': date.month,
+                'day_of_week': date.dayofweek,
+                'day_of_year': date.dayofyear,
+                'week_of_year': date.isocalendar().week,
+                'country': country_encoded,
+                'state': state_encoded,
+                'lag_7': train_df['Cases'].iloc[-7] if len(train_df) >= 7 else 0,
+                'lag_14': train_df['Cases'].iloc[-14] if len(train_df) >= 14 else 0,
+                'rolling_avg_7': train_df['Cases'].iloc[-7:].mean() if len(train_df) >= 7 else 0
+            }
+            
+            # Convert to DataFrame for prediction
+            features_df = pd.DataFrame([day_features])
+            
+            # Predict cases
+            try:
+                predicted_cases = max(0, int(model.predict(features_df)[0]))
+            except:
+                # Fallback prediction if model fails
+                growth_rate = 1.02  # 2% daily growth as fallback
+                predicted_cases = int(current_cases * (growth_rate ** (i+1)))
+            
+            # Calculate rates
+            predicted_incidence = (predicted_cases / population) * 100000 if population > 0 else 0
+            predicted_mortality = fatality_rate_base  # Keeping mortality rate constant
+            
+            results.append({
+                'Date': date.date(),
+                'Predicted Cases': predicted_cases,
+                'Incidence Rate (per 100k)': round(predicted_incidence, 2),
+                'Mortality Rate (%)': round(predicted_mortality, 2)
+            })
+            
+            # Update current cases for next prediction
+            current_cases = predicted_cases
+        
+        # Create results DataFrame
+        result_df = pd.DataFrame(results)
+        
+        # Show results
+        st.subheader(f"30-Day Prediction for {state}, {country}")
+        st.dataframe(result_df)
+        
+        # Plot cases prediction
+        st.line_chart(result_df.set_index('Date')['Predicted Cases'])
+        
+        # Plot rates
+        st.line_chart(result_df.set_index('Date')[['Incidence Rate (per 100k)', 'Mortality Rate (%)']])
