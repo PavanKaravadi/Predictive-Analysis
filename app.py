@@ -1,46 +1,79 @@
 import streamlit as st
-import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.datasets import make_regression  # Better suited for this case
+import numpy as np
+import joblib
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 
-# ✅ This must be the first Streamlit command
-st.set_page_config(page_title="Epidemic Predictor", layout="centered")
+# App Config
+st.set_page_config(page_title="COVID-19 Case Predictor", layout="centered")
 
-# Train model with appropriate data
+# Load model
 @st.cache_resource
-def train_model():
-    # Create synthetic regression data with 1 feature (days) and 1 target (cases)
-    X, y = make_regression(n_samples=1000, n_features=1, noise=10, random_state=42)
-    model = RandomForestRegressor(random_state=42)
-    model.fit(X, y)
-    return model
+def load_model():
+    return joblib.load("covid19_cases_predictor.pkl")
 
-model = train_model()
+model = load_model()
 
-# Simulated country/province data
-data = {
+# Sample country/state data
+region_data = {
     "USA": ["California", "New York", "Texas"],
     "India": ["Maharashtra", "Delhi", "Kerala"],
     "Brazil": ["São Paulo", "Rio de Janeiro"],
     "Italy": ["Lombardy", "Lazio"]
 }
 
-# UI Content
-st.markdown("""
-# 🦠 Epidemic Outbreak Predictor
-### 🌍 Country-wise Prediction | Powered by Random Forest
+# Dummy historical data - In real case, you’d load actual recent country-wise case data
+@st.cache_data
+def load_historical_data():
+    dates = pd.date_range(end=pd.Timestamp.today(), periods=100)
+    data = pd.DataFrame({
+        "date": dates,
+        "world_cases": np.linspace(100, 50000, 100) + np.random.randint(-1000, 1000, 100)
+    })
+    data.set_index("date", inplace=True)
+    return data
 
-This app forecasts the number of confirmed COVID-19 cases based on user input and region.
+historical_data = load_historical_data()
 
----
-""")
+# Dummy update_features logic — customize to match your feature engineering
+def update_features(current_features, last_prediction, current_date):
+    # Example: assume lag feature is just last prediction scaled
+    return [last_prediction * 1.01]  # update with your actual logic
 
-country = st.selectbox("🌐 Select Country", list(data.keys()))
-province = st.selectbox("🏙️ Select Province/State", data[country])
-days = st.number_input("📅 Enter number of days since outbreak began:", min_value=1, max_value=1000)
+def predict_future_cases(model, last_known_date, num_days, initial_features):
+    predictions = []
+    current_features = initial_features.copy()
+    current_date = last_known_date
 
-if st.button("🔮 Predict Confirmed Cases"):
-    input_array = np.array([[days]])
-    prediction = model.predict(input_array)
-    st.success(f"🧾 Predicted Confirmed Cases on Day {days} in **{province}, {country}**: **{int(prediction[0]):,}**")
+    for _ in range(num_days):
+        pred = model.predict([current_features])[0]
+        predictions.append(pred)
+        current_date += pd.Timedelta(days=1)
+        current_features = update_features(current_features, pred, current_date)
+
+    return pd.DataFrame({
+        "date": pd.date_range(start=last_known_date + pd.Timedelta(days=1), periods=num_days),
+        "predicted_cases": predictions
+    }).set_index("date")
+
+# UI Elements
+st.title("🦠 COVID-19 Cases Predictor (Next 30 Days)")
+country = st.selectbox("🌐 Select Country", list(region_data.keys()))
+state = st.selectbox("🏙️ Select State", region_data[country])
+start_date = st.date_input("📅 Start Prediction From", datetime.today())
+
+# Initial features to kick off prediction (simulated)
+initial_features = [historical_data["world_cases"].iloc[-1]]
+
+if st.button("🔮 Predict"):
+    # Predict next 30 days
+    last_known_date = historical_data.index[-1]
+    forecast = predict_future_cases(model, last_known_date, 30, initial_features)
+
+    # Combine with historical data
+    combined = pd.concat([historical_data.tail(60)["world_cases"], forecast["predicted_cases"]])
+    st.line_chart(combined.rename("Confirmed Cases"))
+
+    st.success(f"✅ Prediction completed for {state}, {country} from {start_date.strftime('%Y-%m-%d')}")
+    st.dataframe(forecast.reset_index().rename(columns={"date": "Date", "predicted_cases": "Predicted Cases"}))
