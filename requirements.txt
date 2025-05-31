@@ -5,3 +5,4 @@ joblib
 pandas
 matplotlib
 seaborn
+cloudpickle>=3.0.0
