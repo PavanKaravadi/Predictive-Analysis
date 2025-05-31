@@ -139,14 +139,14 @@ if st.button("Predict for Next 30 Days"):
         # Improved visualization
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Total Predicted Cases", result_df['Predicted Cases'].sum())
+            st.metric("Total Predicted Cases", result_df['Predicted Cases'])
             st.line_chart(result_df.set_index('Date')['Predicted Cases'],
                          use_container_width=True)
         
         with col2:
             st.metric("Average Incidence Rate", 
-                      f"{result_df['Incidence Rate (per 100k)'].mean():.2f} per 100k")
-            st.line_chart(result_df.set_index('Date')[['Incidence Rate (per 100k)']],
+                      f"{result_df['Incidence Rate']}")
+            st.line_chart(result_df.set_index('Date')[['Incidence Rate']],
                          use_container_width=True)
         
         st.write("Detailed Predictions:")
