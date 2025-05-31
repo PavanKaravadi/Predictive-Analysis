@@ -97,7 +97,12 @@ if st.button("Predict for Next 30 Days"):
         
         # Predict for each future day
         for i, date in enumerate(future_dates):
-            # Prepare features for prediction
+            # Simulate the historical lag and rolling features from original training data
+            lag_7 = train_df['Cases'].iloc[-7] if len(train_df) >= 7 else 0
+            lag_14 = train_df['Cases'].iloc[-14] if len(train_df) >= 14 else 0
+            rolling_avg_7 = train_df['Cases'].iloc[-7:].mean() if len(train_df) >= 7 else 0
+
+            # Prepare features for prediction (no dependency on previous prediction)
             day_features = {
                 'day': date.day,
                 'month': date.month,
@@ -106,26 +111,23 @@ if st.button("Predict for Next 30 Days"):
                 'week_of_year': date.isocalendar().week,
                 'country': country_encoded,
                 'state': state_encoded,
-                'lag_7': train_df['Cases'].iloc[-7] if len(train_df) >= 7 else 0,
-                'lag_14': train_df['Cases'].iloc[-14] if len(train_df) >= 14 else 0,
-                'rolling_avg_7': train_df['Cases'].iloc[-7:].mean() if len(train_df) >= 7 else 0
+                'lag_7': lag_7,
+                'lag_14': lag_14,
+                'rolling_avg_7': rolling_avg_7
             }
-            
-            # Convert to DataFrame for prediction
+
             features_df = pd.DataFrame([day_features])
-            
-            # Predict cases
+
+            # Predict cases (not cumulatively)
             try:
                 predicted_cases = max(0, int(model.predict(features_df)[0]))
             except:
-                # Fallback prediction if model fails
-                growth_rate = 1.02  # 2% daily growth as fallback
-                predicted_cases = int(current_cases * (growth_rate ** (i+1)))
-            
+                predicted_cases = int(rolling_avg_7)  # fallback to mean
+
             # Calculate rates
             predicted_incidence = (predicted_cases / population) * 100000 if population > 0 else 0
-            predicted_mortality = fatality_rate_base  # Keeping mortality rate constant
-            
+            predicted_mortality = (region_deaths / predicted_cases) * 100 if predicted_cases > 0 else 0
+
             results.append({
                 'Date': date.date(),
                 'Predicted Cases': predicted_cases,
