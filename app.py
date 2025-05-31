@@ -1,18 +1,24 @@
 import streamlit as st
 import numpy as np
-import joblib
+import pandas as pd
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.datasets import make_regression  # Better suited for this case
 
-# 🛠 Set page config at the very top
+# ✅ This must be the first Streamlit command
 st.set_page_config(page_title="Epidemic Predictor", layout="centered")
 
-# 🔁 Load Random Forest model
+# Train model with appropriate data
 @st.cache_resource
-def load_model():
-    return joblib.load("random_forest_model.pkl")
+def train_model():
+    # Create synthetic regression data with 1 feature (days) and 1 target (cases)
+    X, y = make_regression(n_samples=1000, n_features=1, noise=10, random_state=42)
+    model = RandomForestRegressor(random_state=42)
+    model.fit(X, y)
+    return model
 
-model = load_model()
+model = train_model()
 
-# Simulated country/province structure
+# Simulated country/province data
 data = {
     "USA": ["California", "New York", "Texas"],
     "India": ["Maharashtra", "Delhi", "Kerala"],
@@ -20,7 +26,7 @@ data = {
     "Italy": ["Lombardy", "Lazio"]
 }
 
-# App content
+# UI Content
 st.markdown("""
 # 🦠 Epidemic Outbreak Predictor
 ### 🌍 Country-wise Prediction | Powered by Random Forest
