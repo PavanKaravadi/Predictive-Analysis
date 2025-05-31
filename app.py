@@ -132,7 +132,7 @@ if st.button("Predict for Next 30 Days"):
             'Date': pred_date,
             'Predicted Daily Cases': pred,
             'Incidence Rate (per 100k)': round((pred / 1e6) * 100000, 2) if pred > 0 else 0,
-            'Mortality Rate (%)': round((deaths_df[region_mask].iloc[:, 4:].T.iloc[-1, 0] / pred * 100, 4) if pred > 0 else 0
+            'Mortality Rate (%)': round((deaths_df[region_mask].iloc[:, 4:].T.iloc[-1, 0] / pred * 100, 4)) if pred > 0 else 0
         })
         
         # Update features for next prediction
