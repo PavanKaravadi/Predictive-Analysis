@@ -5,7 +5,7 @@ import datetime
 import numpy as np
 
 # Load ML model
-model = joblib.load("covid19_cases_predictor.pkl")
+model = joblib.load("random_forest_model.pkl")
 
 # Load datasets
 confirmed_df = pd.read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv')
