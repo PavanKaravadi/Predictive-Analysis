@@ -4,6 +4,9 @@ import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.datasets import load_iris  # Replace with real data
 
+# ✅ This must be the first Streamlit command
+st.set_page_config(page_title="Epidemic Predictor", layout="centered")
+
 # Train model inside the app (to avoid version mismatch)
 @st.cache_resource
 def train_model():
@@ -15,7 +18,7 @@ def train_model():
 
 model = train_model()
 
-# UI
+# Simulated country/province data
 data = {
     "USA": ["California", "New York", "Texas"],
     "India": ["Maharashtra", "Delhi", "Kerala"],
@@ -23,8 +26,7 @@ data = {
     "Italy": ["Lombardy", "Lazio"]
 }
 
-st.set_page_config(page_title="Epidemic Predictor", layout="centered")
-
+# UI Content
 st.markdown("""
 # 🦠 Epidemic Outbreak Predictor
 ### 🌍 Country-wise Prediction | Powered by Random Forest
