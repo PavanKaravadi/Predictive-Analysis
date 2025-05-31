@@ -1,79 +1,87 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import joblib
-import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
+import datetime
+import numpy as np
 
-# App Config
-st.set_page_config(page_title="COVID-19 Case Predictor", layout="centered")
+# Load ML model
+model = joblib.load("covid19_cases_predictor.pkl")
 
-# Load model
-@st.cache_resource
-def load_model():
-    return joblib.load("covid19_cases_predictor.pkl")
+# Load datasets
+confirmed_df = pd.read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv')
+deaths_df = pd.read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv')
+latest_data = pd.read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_daily_reports/01-15-2023.csv')
 
-model = load_model()
+# Title
+st.title("COVID-19 Prediction Dashboard")
 
-# Sample country/state data
-region_data = {
-    "USA": ["California", "New York", "Texas"],
-    "India": ["Maharashtra", "Delhi", "Kerala"],
-    "Brazil": ["São Paulo", "Rio de Janeiro"],
-    "Italy": ["Lombardy", "Lazio"]
-}
+# Preprocess location info from latest data
+latest_data['Province_State'] = latest_data['Province_State'].fillna('Unknown')
+latest_data['Country_Region'] = latest_data['Country_Region'].fillna('Unknown')
 
-# Dummy historical data - In real case, you’d load actual recent country-wise case data
-@st.cache_data
-def load_historical_data():
-    dates = pd.date_range(end=pd.Timestamp.today(), periods=100)
-    data = pd.DataFrame({
-        "date": dates,
-        "world_cases": np.linspace(100, 50000, 100) + np.random.randint(-1000, 1000, 100)
+# Dropdown inputs
+country = st.selectbox("Select Country", sorted(latest_data['Country_Region'].unique()))
+states_filtered = latest_data[latest_data['Country_Region'] == country]['Province_State'].unique()
+state = st.selectbox("Select State", sorted(states_filtered))
+
+# Select date
+last_known_date = st.date_input("Last Known Case Date", datetime.date.today())
+
+# Predict Button
+if st.button("Predict for Next 30 Days"):
+    # Encode country and state (replace with actual encodings used in your model)
+    country_encoded = hash(country) % 1000
+    state_encoded = hash(state) % 1000
+
+    # Prepare future dates
+    future_days = np.arange(1, 31)
+    future_dates = [last_known_date + datetime.timedelta(days=int(i)) for i in future_days]
+
+    predicted_cases = []
+    incidence_rates = []
+    mortality_rates = []
+
+    # Get real values from latest report for this country and state
+    try:
+        region_row = latest_data[
+            (latest_data['Country_Region'] == country) & 
+            (latest_data['Province_State'] == state)
+        ].iloc[0]
+
+        confirmed = region_row['Confirmed']
+        deaths = region_row['Deaths']
+        incident_rate_base = region_row['Incident_Rate'] if region_row['Incident_Rate'] > 0 else 0
+        fatality_ratio_base = region_row['Case_Fatality_Ratio'] if region_row['Case_Fatality_Ratio'] > 0 else 0
+    except:
+        confirmed, deaths, incident_rate_base, fatality_ratio_base = 1000, 10, 5.0, 1.0
+
+    # Predict for each day
+    for day in future_days:
+        features = [[day, country_encoded, state_encoded]]
+        try:
+            pred = model.predict(features)[0]
+        except Exception as e:
+            pred = 0
+        pred = max(0, int(pred))
+        predicted_cases.append(pred)
+
+        # Calculate rates (example logic)
+        predicted_incidence = incident_rate_base + (pred / 100000 * 100)  # fake increment
+        predicted_mortality = (deaths + pred * fatality_ratio_base / 100) / max(1, confirmed + pred) * 100
+
+        incidence_rates.append(round(predicted_incidence, 2))
+        mortality_rates.append(round(predicted_mortality, 2))
+
+    # Output DataFrame
+    result_df = pd.DataFrame({
+        'Date': future_dates,
+        'Predicted Confirmed Cases': predicted_cases,
+        'Estimated Incidence Rate (per 100k)': incidence_rates,
+        'Estimated Mortality Rate (%)': mortality_rates
     })
-    data.set_index("date", inplace=True)
-    return data
 
-historical_data = load_historical_data()
-
-# Dummy update_features logic — customize to match your feature engineering
-def update_features(current_features, last_prediction, current_date):
-    # Example: assume lag feature is just last prediction scaled
-    return [last_prediction * 1.01]  # update with your actual logic
-
-def predict_future_cases(model, last_known_date, num_days, initial_features):
-    predictions = []
-    current_features = initial_features.copy()
-    current_date = last_known_date
-
-    for _ in range(num_days):
-        pred = model.predict([current_features])[0]
-        predictions.append(pred)
-        current_date += pd.Timedelta(days=1)
-        current_features = update_features(current_features, pred, current_date)
-
-    return pd.DataFrame({
-        "date": pd.date_range(start=last_known_date + pd.Timedelta(days=1), periods=num_days),
-        "predicted_cases": predictions
-    }).set_index("date")
-
-# UI Elements
-st.title("🦠 COVID-19 Cases Predictor (Next 30 Days)")
-country = st.selectbox("🌐 Select Country", list(region_data.keys()))
-state = st.selectbox("🏙️ Select State", region_data[country])
-start_date = st.date_input("📅 Start Prediction From", datetime.today())
-
-# Initial features to kick off prediction (simulated)
-initial_features = [historical_data["world_cases"].iloc[-1]]
-
-if st.button("🔮 Predict"):
-    # Predict next 30 days
-    last_known_date = historical_data.index[-1]
-    forecast = predict_future_cases(model, last_known_date, 30, initial_features)
-
-    # Combine with historical data
-    combined = pd.concat([historical_data.tail(60)["world_cases"], forecast["predicted_cases"]])
-    st.line_chart(combined.rename("Confirmed Cases"))
-
-    st.success(f"✅ Prediction completed for {state}, {country} from {start_date.strftime('%Y-%m-%d')}")
-    st.dataframe(forecast.reset_index().rename(columns={"date": "Date", "predicted_cases": "Predicted Cases"}))
+    # Show results
+    st.subheader("Prediction Results")
+    st.dataframe(result_df)
+    st.line_chart(result_df.set_index('Date')[['Predicted Confirmed Cases']])
+    st.line_chart(result_df.set_index('Date')[['Estimated Incidence Rate (per 100k)', 'Estimated Mortality Rate (%)']])
