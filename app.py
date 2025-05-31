@@ -49,7 +49,7 @@ if st.button("Predict for Next 30 Days"):
     # Get historical data for selected region - fixed column name mismatch
     region_mask = (
         (confirmed_df['Country/Region'] == country) & 
-        (confirmed_df['Province/State'].fillna('') == state
+        (confirmed_df['Province/State'].fillna('') == state)
     )
     
     # Safely get region cases
