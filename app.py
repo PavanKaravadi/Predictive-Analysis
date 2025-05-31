@@ -1,11 +1,21 @@
 import streamlit as st
 import numpy as np
-import joblib
+import pandas as pd
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.datasets import load_iris  # Replace with real data
 
-# Load model trained and saved in the SAME environment
-model = joblib.load("random_forest_model.pkl")
+# Train model inside the app (to avoid version mismatch)
+@st.cache_resource
+def train_model():
+    # Replace this with your actual training dataset
+    X, y = load_iris(return_X_y=True)
+    model = RandomForestRegressor(random_state=42)
+    model.fit(X, y)
+    return model
 
-# Simulated country/province data
+model = train_model()
+
+# UI
 data = {
     "USA": ["California", "New York", "Texas"],
     "India": ["Maharashtra", "Delhi", "Kerala"],
@@ -13,7 +23,6 @@ data = {
     "Italy": ["Lombardy", "Lazio"]
 }
 
-# UI
 st.set_page_config(page_title="Epidemic Predictor", layout="centered")
 
 st.markdown("""
@@ -25,14 +34,10 @@ This app forecasts the number of confirmed COVID-19 cases based on user input an
 ---
 """)
 
-# Dropdowns
 country = st.selectbox("🌐 Select Country", list(data.keys()))
 province = st.selectbox("🏙️ Select Province/State", data[country])
-
-# Input
 days = st.number_input("📅 Enter number of days since outbreak began:", min_value=1, max_value=1000)
 
-# Button
 if st.button("🔮 Predict Confirmed Cases"):
     input_array = np.array([[days]])
     prediction = model.predict(input_array)
